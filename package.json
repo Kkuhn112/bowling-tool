@@ -1,0 +1,11 @@
+{
+  "name": "bowling-tool",
+  "version": "1.0.0",
+  "description": "Mobile bowling score tracker with live max-possible score",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "npx http-server . -p 8080"
+  },
+  "license": "MIT"
+}
