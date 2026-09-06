@@ -1,0 +1,11 @@
+# One-click deploy of the sync server (https://render.com/docs/blueprint-spec).
+# Nothing to build — the app is static files and the server is Node's standard
+# library. Render sets PORT; the server reads it.
+services:
+  - type: web
+    name: strike-bowling
+    runtime: node
+    plan: free
+    buildCommand: echo "no build step"
+    startCommand: node server/server.js
+    healthCheckPath: /api/health

@@ -120,6 +120,170 @@ button {
   opacity: 0.32;
 }
 
+/* ---------- shared game ---------- */
+
+.live-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 13px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+
+.live-chip[hidden] {
+  display: none; /* a class-level display would otherwise beat the hidden attribute */
+}
+
+.live-chip:active {
+  transform: scale(0.94);
+}
+
+.live-chip .code {
+  color: var(--text);
+  letter-spacing: 0.12em;
+}
+
+.live-chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--spare);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18);
+}
+
+.live-chip.connecting .dot {
+  background: var(--strike);
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.live-chip.offline .dot {
+  background: var(--danger);
+  box-shadow: none;
+}
+
+@keyframes pulse {
+  50% { opacity: 0.35; }
+}
+
+.room {
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--line);
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.room-code {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  background: linear-gradient(120deg, var(--accent-2), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.room .hint {
+  margin-top: 6px;
+}
+
+.join-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.join-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px;
+}
+
+.join-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.join-row .sheet-btn,
+.server-row .sheet-btn {
+  width: auto;
+  padding-inline: 22px;
+}
+
+.server-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.server-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 11px 13px;
+}
+
+.server-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  /* Clear of the topbar, so undo and the menu stay reachable while it shows. */
+  top: calc(58px + env(safe-area-inset-top));
+  transform: translate(-50%, -140%);
+  z-index: 8;
+  max-width: min(420px, calc(100% - 28px));
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #1d2740;
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 16px 40px -20px #000;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: center;
+  opacity: 0;
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.25, 1), opacity 0.2s ease;
+}
+
+.toast.open {
+  transform: translate(-50%, 0);
+  opacity: 1;
+}
+
+.toast.remote {
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #d7fff0;
+}
+
 .icon-btn.wide-confirm {
   width: auto;
   padding: 0 14px;

@@ -20,6 +20,7 @@
 
   <header class="topbar">
     <div class="brand"><span class="dot"></span>Strike</div>
+    <button class="live-chip" id="liveChip" hidden aria-label="Shared game"></button>
     <button class="icon-btn" id="undoBtn" title="Undo last ball" aria-label="Undo last ball">
       <svg viewBox="0 0 24 24"><path d="M4 9h11a5 5 0 0 1 0 10h-6"/><path d="M8 5 4 9l4 4"/></svg>
     </button>
@@ -63,6 +64,9 @@
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Players and game options">
   <button class="grip" id="closeSheetBtn" aria-label="Close"></button>
 
+  <h2>Play together</h2>
+  <div id="syncPanel"></div>
+
   <h2>Players</h2>
   <div class="roster" id="roster"></div>
   <button class="sheet-btn" id="addPlayerBtn" style="margin-top:8px">+ Add player</button>
@@ -77,6 +81,8 @@
     balls are thrown — a <b>&ndash;</b> means the frame is still waiting on a bonus.
     <b>Max possible</b> assumes you strike out from here, so it drops the moment a
     strike or spare is missed and tells you what is still on the table.
+    In a shared game every phone can enter balls; the scorecard, whose turn it is
+    and undo all stay in step.
   </p>
 </div>
 
@@ -89,7 +95,11 @@
   </div>
 </div>
 
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
 <script src="scoring.js"></script>
+<script src="ops.js"></script>
+<script src="sync.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
