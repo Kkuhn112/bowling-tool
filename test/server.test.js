@@ -245,6 +245,39 @@ test('the app itself is served, and nothing outside it is', async () => {
   assert.strictEqual((await fetch(base + '/nope.html')).status, 404);
 });
 
+test('the api is usable from a page this server did not serve', async () => {
+  const origin = 'https://example.github.io';
+
+  const preflight = await fetch(base + '/api/rooms', {
+    method: 'OPTIONS',
+    headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' }
+  });
+  assert.strictEqual(preflight.status, 204);
+  assert.strictEqual(preflight.headers.get('access-control-allow-origin'), origin);
+  assert.match(preflight.headers.get('access-control-allow-methods'), /POST/);
+  assert.match(preflight.headers.get('access-control-allow-headers'), /x-client-id/);
+
+  const health = await fetch(base + '/api/health', { headers: { origin } });
+  assert.strictEqual(health.headers.get('access-control-allow-origin'), origin);
+  assert.strictEqual(health.headers.get('vary'), 'origin');
+
+  const room = await newRoom({ names: ['Ada'] });
+  const stream = openStream(room.code);
+  await stream.ready;
+  await stream.next();
+
+  const rolled = await fetch(base + '/api/rooms/' + room.code + '/ops', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-client-id': 'pages', origin },
+    body: JSON.stringify({ op: { type: 'roll', playerId: room.state.players[0].id, pins: 10 } })
+  });
+  assert.strictEqual(rolled.status, 200);
+  assert.strictEqual(rolled.headers.get('access-control-allow-origin'), origin);
+  assert.strictEqual((await stream.next()).state.rolls.length, 1, 'the ball reaches the other phone');
+
+  stream.close();
+});
+
 test('rooms are written to disk so a restart keeps the game', async () => {
   const room = await newRoom({ names: ['Ada'] });
   await sendOp(room.code, { type: 'roll', playerId: room.state.players[0].id, pins: 10 });

@@ -225,9 +225,33 @@ button {
   border-color: var(--accent);
 }
 
-.join-row .sheet-btn {
+.join-row .sheet-btn,
+.server-row .sheet-btn {
   width: auto;
   padding-inline: 22px;
+}
+
+.server-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.server-row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 11px 13px;
+}
+
+.server-row input:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .toast {

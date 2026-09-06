@@ -292,9 +292,31 @@ async function opRoute(req, res, room) {
 
 const ROOM_ROUTE = /^\/api\/rooms\/([A-Za-z0-9]{1,8})(\/events|\/ops)?$/;
 
+/*
+ * The app does not have to be served from here — a copy on GitHub Pages or on
+ * the phone itself can use this server, so the API is open cross-origin. There
+ * are no cookies or credentials involved; knowing a room's code is the only way
+ * in, which is exactly what sharing the code is meant to grant.
+ */
+function applyCors(req, res) {
+  res.setHeader('access-control-allow-origin', req.headers.origin || '*');
+  res.setHeader('vary', 'origin');
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-headers', 'content-type, x-client-id');
+  res.setHeader('access-control-max-age', '600');
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
+
+  if (pathname.startsWith('/api/')) {
+    applyCors(req, res);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      return res.end();
+    }
+  }
 
   if (pathname === '/api/health') return sendJson(res, 200, { ok: true, rooms: rooms.size });
 
@@ -356,10 +378,25 @@ async function stop() {
   await new Promise((resolve) => server.close(resolve));
 }
 
+/* The addresses another device on the same network can actually reach. */
+function lanAddresses() {
+  const found = [];
+  const interfaces = require('node:os').networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const entry of interfaces[name] || []) {
+      if (entry.family === 'IPv4' && !entry.internal) found.push(entry.address);
+    }
+  }
+  return found;
+}
+
 if (require.main === module) {
   start().then(() => {
     const shown = HOST === '0.0.0.0' ? 'localhost' : HOST;
     console.log(`Strike is serving on http://${shown}:${PORT}`);
+    for (const address of lanAddresses()) {
+      console.log(`  on this network:  http://${address}:${PORT}`);
+    }
     console.log('Open it on both phones — one starts a shared game, the other joins with the code.');
   });
 

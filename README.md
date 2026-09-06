@@ -55,8 +55,19 @@ enter balls, and every phone sees the card, whose turn it is, and undo in step.
 - **Nothing is lost when you leave.** Leaving a shared game drops you back to
   keeping score on your own phone.
 
-Without a server — opened from a file, or hosted statically — the app stays in
-local mode and the menu says so. Everything else works exactly the same.
+The app and the sync server do not have to be the same site. If this copy is
+hosted somewhere static — GitHub Pages, a file on the phone — the menu offers an
+**address box**: put in the sync server's address (the one `npm start` prints
+for your network, or a deployed URL) and sharing goes through it. The API allows
+cross-origin use for exactly this.
+
+One catch the app will tell you about: a page served over **https** can only
+talk to an **https** sync server — browsers block the mix. So GitHub Pages plus
+a server on your home wifi will not work; serve the app from the sync server
+itself, or deploy the server somewhere with https (see below).
+
+Without a server the app stays in local mode and the menu says which case you
+are in and what to do. Everything else works exactly the same.
 
 ## Files
 
@@ -114,9 +125,22 @@ subscribers watching one game update live.
 
 ## Hosting it
 
-- **Shared games** need somewhere that runs Node: `npm start`, with `PORT` and
-  `HOST` read from the environment. Render, Fly and Railway all take it as-is;
-  on a home network, both phones on the same wifi is enough.
-- **Local-only** works on any static host, GitHub Pages included: **Settings →
-  Pages → Deploy from a branch**, this branch and the root folder. The
-  scorekeeping is identical; only the shared mode is unavailable.
+Shared games need something running Node. `npx http-server`, VS Code Live
+Server, GitHub Pages and opening the file directly all serve the app fine, but
+none of them answer `/api` — that is what "no sync server at …" in the menu
+means. Pick whichever of these suits:
+
+**At the alley, one laptop.** `npm start`, then open the address it prints for
+your network (`http://192.168.1.4:8080`) on both phones. Nothing to deploy, but
+everyone has to be on the same wifi.
+
+**Deployed, reachable anywhere.** The repo has a `render.yaml`, so Render's
+Blueprint deploy takes it as-is; Fly and Railway need no more than
+`node server/server.js` and the `PORT` they set. Then open that URL on both
+phones — or keep using a static copy and put the deployed address in the menu's
+address box.
+
+**Static, local scoring only.** Any static host works, GitHub Pages included:
+**Settings → Pages → Deploy from a branch**, this branch and the root folder.
+Scorekeeping is identical; shared games need one of the options above, pointed
+at from the address box.

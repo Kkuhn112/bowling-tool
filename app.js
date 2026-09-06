@@ -378,8 +378,10 @@
   }
 
   function renderSyncPanel() {
-    // A code being typed here must survive an update arriving from the other phone.
-    if (el.syncPanel.contains(document.activeElement)) return;
+    // Text being typed here must survive an update arriving from the other
+    // phone — but a focused button is no reason to hold back a redraw.
+    var typing = document.activeElement;
+    if (typing && typing.tagName === 'INPUT' && el.syncPanel.contains(typing)) return;
     el.syncPanel.innerHTML = '';
 
     if (Sync.isLive()) {
@@ -446,6 +448,61 @@
     note.textContent = syncNote ||
       'Start a game to get a four-letter code, then hand it to whoever is sitting with the other phone.';
     el.syncPanel.appendChild(note);
+
+    // Only worth showing once this copy has no server of its own, or is already
+    // pointed at one — otherwise it is a setting nobody needs to think about.
+    if (syncNote || Sync.server()) el.syncPanel.appendChild(serverRow());
+  }
+
+  /* Points a statically hosted copy at a sync server running somewhere else. */
+  function serverRow() {
+    var wrap = document.createElement('div');
+
+    var row = document.createElement('form');
+    row.className = 'server-row';
+    // Deliberately not type="url": an address like 192.168.1.4:8080 is exactly
+    // what people have to hand, and the browser would refuse to submit it.
+    row.innerHTML =
+      '<input id="serverUrl" type="text" inputmode="url" autocomplete="off" spellcheck="false" ' +
+      'placeholder="192.168.1.4:8080" aria-label="Sync server address">' +
+      '<button class="sheet-btn" type="submit">Use</button>';
+
+    var input = row.querySelector('#serverUrl');
+    input.value = Sync.server();
+
+    row.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var button = row.querySelector('button');
+      button.disabled = true;
+      Sync.setServer(input.value).then(function (url) {
+        syncNote = '';
+        input.blur(); // let the panel redraw into its connected state
+        toast(url ? 'Connected to ' + url : 'Using this site');
+        render();
+      }, function (err) {
+        syncNote = err.message;
+        button.disabled = false;
+        render();
+      });
+    });
+
+    wrap.appendChild(row);
+
+    var hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = Sync.server()
+      ? 'Sharing is going through this server. Clear the box and tap Use to go back to this site.'
+      : 'Running the server elsewhere? Put its address here — the one npm start prints for your network.';
+    wrap.appendChild(hint);
+
+    return wrap;
+  }
+
+  function joinFromHash() {
+    var invited = location.hash.replace('#', '').toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(invited)) return;
+    if (!Sync.canSync() || Sync.code() === invited) return;
+    joinRoom(invited);
   }
 
   function joinRoom(code) {
@@ -581,6 +638,19 @@
   function openSheet() {
     el.sheet.classList.add('open');
     el.scrim.classList.add('open');
+
+    // Find out whether sharing is even possible before the user taps and waits.
+    if (!Sync.isLive()) {
+      Sync.available().then(function () {
+        if (!syncNote) return;
+        syncNote = '';
+        render();
+      }, function (err) {
+        if (syncNote === err.message) return;
+        syncNote = err.message;
+        render();
+      });
+    }
   }
 
   function closeSheet() {
@@ -632,9 +702,10 @@
 
     render();
 
-    // An invite link (#CODE) drops you straight into that game.
-    var invited = location.hash.replace('#', '').toUpperCase();
-    if (/^[A-Z0-9]{4}$/.test(invited) && Sync.canSync()) joinRoom(invited);
+    // An invite link (#CODE) drops you straight into that game — on load, and
+    // on a tap that only changes the hash because the app is already open.
+    window.addEventListener('hashchange', joinFromHash);
+    joinFromHash();
   }
 
   init();

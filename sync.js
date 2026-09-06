@@ -5,17 +5,75 @@
  * Server-Sent Events. EventSource reconnects on its own, so a phone that loses
  * signal in the alley picks the game back up when it returns.
  *
- * Everything here is optional: with no server (opened from a file, or hosted
- * statically) `available()` fails and the app stays in local mode.
+ * Everything here is optional: with no server reachable, `available()` fails
+ * and the app stays in local mode.
+ *
+ * The server is normally whoever served the page, but it does not have to be:
+ * `setServer()` points a statically hosted copy (GitHub Pages, a file on the
+ * phone) at a sync server running elsewhere.
  */
 (function (root) {
   'use strict';
 
-  var API = '/api';
+  var SERVER_KEY = 'strike.server';
   var status = 'offline';   // offline | connecting | live
   var roomCode = null;
   var stream = null;
   var handlers = { state: [], status: [], error: [] };
+
+  /* '' means "whoever served this page". */
+  var serverBase = (function () {
+    try {
+      return localStorage.getItem(SERVER_KEY) || '';
+    } catch (e) {
+      return '';
+    }
+  })();
+
+  function api(path) {
+    return serverBase + '/api' + path;
+  }
+
+  /* Accepts "192.168.1.4:8080", "localhost:8080" or a full URL. */
+  function normalizeServer(value) {
+    var text = String(value || '').trim().replace(/\/+$/, '');
+    if (!text) return '';
+    if (!/^https?:\/\//i.test(text)) {
+      var looksLocal = /^(localhost|\d{1,3}(\.\d{1,3}){3}|[^/]+\.local)(:\d+)?$/i.test(text) || /:\d+$/.test(text);
+      text = (looksLocal ? 'http://' : 'https://') + text;
+    }
+    return text.replace(/\/+$/, '');
+  }
+
+  function server() {
+    return serverBase;
+  }
+
+  /*
+   * Points at a sync server. Returns a promise so the caller can report a bad
+   * address instead of silently storing one that never answers.
+   */
+  function setServer(value) {
+    var next = normalizeServer(value);
+
+    if (next && location.protocol === 'https:' && next.indexOf('http://') === 0) {
+      // The browser blocks this outright, so say so rather than let it fail obscurely.
+      return Promise.reject(new Error('this page is on https, so the sync server needs an https address too'));
+    }
+
+    var previous = serverBase;
+    serverBase = next;
+    return available().then(function () {
+      try {
+        if (next) localStorage.setItem(SERVER_KEY, next);
+        else localStorage.removeItem(SERVER_KEY);
+      } catch (e) { /* private mode — it just won't be remembered */ }
+      return next;
+    }, function (err) {
+      serverBase = previous;
+      throw err;
+    });
+  }
 
   var clientId = (function () {
     var key = 'strike.client';
@@ -44,13 +102,22 @@
     if (handlers[name]) handlers[name].push(fn);
   }
 
-  /* The page must come from the sync server for any of this to work. */
+  /* Sharing needs either a server that served this page, or one named explicitly. */
   function canSync() {
-    return location.protocol === 'http:' || location.protocol === 'https:';
+    return serverBase !== '' || location.protocol === 'http:' || location.protocol === 'https:';
+  }
+
+  /* Says what is wrong and what to do about it, for whichever way this copy is running. */
+  function unreachable() {
+    if (serverBase) return new Error('nothing answered at ' + serverBase);
+    if (location.protocol === 'file:') {
+      return new Error('this copy is a file on the device — run npm start, then add that server’s address below');
+    }
+    return new Error('no sync server at ' + location.host + ' — run npm start there, or add another server’s address below');
   }
 
   function request(path, options) {
-    return fetch(API + path, Object.assign({
+    return fetch(api(path), Object.assign({
       headers: { 'content-type': 'application/json', 'x-client-id': clientId }
     }, options || {})).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
@@ -59,14 +126,14 @@
     });
   }
 
-  /* Resolves if a sync server is answering on this origin. */
+  /* Resolves if a sync server is answering. */
   function available() {
-    if (!canSync()) return Promise.reject(new Error('open the app from the sync server to play together'));
+    if (!canSync()) return Promise.reject(unreachable());
     return request('/health').then(function (res) {
-      if (!res.ok) throw new Error('this copy is hosted without the sync server');
+      if (!res.ok) throw unreachable();
       return true;
     }, function () {
-      throw new Error('this copy is hosted without the sync server');
+      throw unreachable();
     });
   }
 
@@ -75,7 +142,7 @@
     roomCode = code;
     setStatus('connecting');
 
-    stream = new EventSource(API + '/rooms/' + encodeURIComponent(code) + '/events');
+    stream = new EventSource(api('/rooms/' + encodeURIComponent(code) + '/events'));
 
     stream.addEventListener('state', function (event) {
       setStatus('live');
@@ -159,6 +226,8 @@
     on: on,
     available: available,
     canSync: canSync,
+    server: server,
+    setServer: setServer,
     create: create,
     join: join,
     leave: leave,
