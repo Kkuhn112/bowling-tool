@@ -1,9 +1,8 @@
-/* Strike — mobile bowling score tracker. UI layer; the maths lives in scoring.js. */
+/* Strike — UI layer. Rules live in scoring.js, state changes in ops.js, sharing in sync.js. */
 (function () {
   'use strict';
 
-  var STORAGE_KEY = 'strike.game.v1';
-  var MAX_PLAYERS = 8;
+  var STORAGE_KEY = 'strike.game.v2';
 
   var el = {
     players: document.getElementById('players'),
@@ -19,8 +18,11 @@
     pinsInfo: document.getElementById('pinsInfo'),
     undoBtn: document.getElementById('undoBtn'),
     menuBtn: document.getElementById('menuBtn'),
+    liveChip: document.getElementById('liveChip'),
+    toast: document.getElementById('toast'),
     sheet: document.getElementById('sheet'),
     scrim: document.getElementById('scrim'),
+    syncPanel: document.getElementById('syncPanel'),
     roster: document.getElementById('roster'),
     addPlayerBtn: document.getElementById('addPlayerBtn'),
     newGameBtn: document.getElementById('newGameBtn'),
@@ -31,160 +33,99 @@
     reviewBtn: document.getElementById('reviewBtn')
   };
 
-  var state = { players: [], active: 0 };
-  var history = [];
+  var state = Ops.newState();
+  var games = {};            // player id -> scored game, rebuilt every render
+  var serverVersion = 0;     // last version the server confirmed
+  var viewers = 0;
   var resultsDismissed = false;
+  var syncNote = '';         // why sharing is unavailable, if it is
   var numberKeys = [];
   var markKey = null;
+  var toastTimer = null;
 
-  /* ---------- state ---------- */
-
-  function newPlayer(name) {
-    return { name: name, game: Bowling.createGame() };
-  }
+  /* ---------- state plumbing ---------- */
 
   function activePlayer() {
-    return state.players[state.active];
+    return state.players[state.active] || state.players[0];
   }
 
-  function snapshot() {
-    return JSON.stringify({
-      active: state.active,
-      players: state.players.map(function (p) {
-        return { name: p.name, frames: p.game.frames };
-      })
-    });
-  }
-
-  function restore(json) {
-    var data = JSON.parse(json);
-    state.active = data.active;
-    state.players = data.players.map(function (p) {
-      var player = newPlayer(p.name);
-      player.game.frames = p.frames.map(function (f) { return f.slice(); });
-      return player;
-    });
+  function activeGame() {
+    return games[activePlayer().id];
   }
 
   function save() {
+    if (Sync.isLive()) return; // a shared game lives on the server
     try {
-      localStorage.setItem(STORAGE_KEY, snapshot());
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(Ops.serialize(state)));
     } catch (e) {
-      /* private mode / full quota — the game just won't survive a reload */
+      /* private mode or full quota — the game just won't survive a reload */
     }
   }
 
   function load() {
-    var raw;
     try {
-      raw = localStorage.getItem(STORAGE_KEY);
-    } catch (e) {
-      return false;
-    }
-    if (!raw) return false;
-    try {
-      restore(raw);
-      // Trust nothing that came out of storage: it must be a legal game.
-      if (!state.players.length || !state.players.every(validGame)) throw new Error('bad save');
-      if (!(state.active >= 0 && state.active < state.players.length)) state.active = 0;
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      var restored = Ops.deserialize(JSON.parse(raw));
+      if (!restored) return false;
+      state = restored;
       return true;
     } catch (e) {
-      state.players = [];
       return false;
     }
   }
 
-  function validGame(player) {
-    var frames = player.game.frames;
-    if (!Array.isArray(frames) || frames.length !== Bowling.FRAMES) return false;
-    var replay = Bowling.createGame();
-    for (var i = 0; i < frames.length; i++) {
-      if (!Array.isArray(frames[i])) return false;
-      for (var j = 0; j < frames[i].length; j++) {
-        if (!Bowling.roll(replay, frames[i][j])) return false;
-      }
-    }
-    // The replay must land the rolls in the same frames they claim to be in.
-    return JSON.stringify(replay.frames) === JSON.stringify(frames);
-  }
+  /*
+   * The one way the game changes. Locally it just applies; in a shared game it
+   * also goes to the server, whose reply is the version everyone ends up on.
+   */
+  function commit(op) {
+    op.clientId = Sync.clientId;
 
-  function gameOverForEveryone() {
-    return state.players.every(function (p) { return Bowling.isGameOver(p.game); });
-  }
-
-  /* ---------- actions ---------- */
-
-  function pushHistory() {
-    history.push(snapshot());
-    if (history.length > 200) history.shift();
-  }
-
-  function roll(pins) {
-    var player = activePlayer();
-    if (!player || !Bowling.isLegalRoll(player.game, pins)) return;
-
-    pushHistory();
-    var frameIndex = Bowling.currentFrame(player.game);
-    Bowling.roll(player.game, pins);
-    buzz(pins === 10 ? 18 : 8);
-
-    // Hand the lane over as soon as the frame is finished.
-    if (state.players.length > 1 && Bowling.isFrameComplete(player.game.frames, frameIndex)) {
-      state.active = nextPlayerIndex();
+    if (!Sync.isLive()) {
+      var local = Ops.apply(state, op);
+      if (!local.ok) return toast(local.reason);
+      save();
+      render();
+      return;
     }
 
-    resultsDismissed = false;
-    save();
-    render();
-  }
-
-  function nextPlayerIndex() {
-    var n = state.players.length;
-    for (var step = 1; step <= n; step++) {
-      var i = (state.active + step) % n;
-      if (!Bowling.isGameOver(state.players[i].game)) return i;
+    // Undo is the one op that must not race: it carries the version it undoes,
+    // so it can never quietly delete a ball this phone hasn't seen yet.
+    if (op.type === 'undo') {
+      op.baseVersion = serverVersion;
+      Sync.send(op).then(handleReply);
+      return;
     }
-    return state.active;
-  }
 
-  function undo() {
-    if (!history.length) return;
-    restore(history.pop());
-    resultsDismissed = false;
-    buzz(8);
-    save();
+    var optimistic = Ops.apply(state, op);
+    if (!optimistic.ok) return toast(optimistic.reason);
     render();
+    Sync.send(op).then(handleReply);
   }
 
-  function newGame() {
-    pushHistory();
-    state.players.forEach(function (p) { p.game = Bowling.createGame(); });
-    state.active = 0;
-    resultsDismissed = false;
-    save();
-    render();
+  function handleReply(reply) {
+    if (reply.payload) adopt(reply.payload);
+    if (!reply.ok && reply.error) toast(reply.error);
   }
 
-  function addPlayer() {
-    if (state.players.length >= MAX_PLAYERS) return;
-    pushHistory();
-    state.players.push(newPlayer('Player ' + (state.players.length + 1)));
-    save();
-    render();
-  }
+  /* Takes the server's word for the state of the game. */
+  function adopt(payload) {
+    var next = Ops.deserialize(payload.state);
+    if (!next) return;
 
-  function removePlayer(index) {
-    if (state.players.length < 2) return;
-    pushHistory();
-    state.players.splice(index, 1);
-    if (state.active >= state.players.length) state.active = state.players.length - 1;
-    save();
-    render();
-  }
+    var lastOp = payload.state.lastOp;
+    var moved = next.version !== state.version;
 
-  function selectPlayer(index) {
-    state.active = index;
-    save();
+    state = next;
+    serverVersion = next.version;
+    viewers = payload.viewers || 0;
+    if (moved) resultsDismissed = false;
+
+    // Say who did what, but only for the phone that didn't do it.
+    if (moved && lastOp && lastOp.by && lastOp.clientId !== Sync.clientId) {
+      toast(lastOp.by + ' ' + lastOp.label, 'remote');
+    }
     render();
   }
 
@@ -192,6 +133,39 @@
     try {
       if (navigator.vibrate) navigator.vibrate(ms);
     } catch (e) { /* not supported */ }
+  }
+
+  function toast(text, kind) {
+    if (!text) return;
+    el.toast.textContent = text;
+    el.toast.className = 'toast open' + (kind ? ' ' + kind : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      el.toast.className = 'toast';
+    }, 2800);
+  }
+
+  /* ---------- actions ---------- */
+
+  function roll(pins) {
+    var game = activeGame();
+    if (!game || !Bowling.isLegalRoll(game, pins)) return;
+    buzz(pins === Bowling.PINS ? 18 : 8);
+    commit({ type: 'roll', playerId: activePlayer().id, pins: pins });
+  }
+
+  function undo() {
+    buzz(8);
+    commit({ type: 'undo' });
+  }
+
+  function newGame() {
+    commit({ type: 'new_game' });
+  }
+
+  function addPlayer() {
+    // The id is chosen here so this phone and the server agree on it.
+    commit({ type: 'add_player', id: Ops.makeId(), name: 'Player ' + (state.players.length + 1) });
   }
 
   /* The next ball gets a full rack — so a 10 would be a strike, not a spare. */
@@ -205,22 +179,30 @@
     return f[0] === Bowling.PINS ? f[1] === Bowling.PINS : true;
   }
 
+  function everyoneDone() {
+    return state.players.every(function (p) { return Bowling.isGameOver(games[p.id]); });
+  }
+
   /* ---------- rendering ---------- */
 
   function render() {
-    var player = activePlayer();
-    var result = Bowling.score(player.game);
-    var max = Bowling.maxPossible(player.game);
-    var over = Bowling.isGameOver(player.game);
+    games = Ops.games(state);
+
+    var game = activeGame();
+    var result = Bowling.score(game);
+    var max = Bowling.maxPossible(game);
+    var over = Bowling.isGameOver(game);
 
     renderPlayers();
-    renderBoard(player.game, result);
-    renderStats(player.game, result, max, over);
-    renderKeys(player.game, over);
+    renderBoard(game, result);
+    renderStats(game, result, max, over);
+    renderKeys(game, over);
+    renderLive();
+    renderSyncPanel();
     renderRoster();
     renderResults();
 
-    el.undoBtn.disabled = history.length === 0;
+    el.undoBtn.disabled = state.rolls.length === 0;
   }
 
   function renderPlayers() {
@@ -229,15 +211,17 @@
       var chip = document.createElement('button');
       chip.className = 'player-chip' +
         (i === state.active ? ' active' : '') +
-        (Bowling.isGameOver(p.game) ? ' done' : '');
+        (Bowling.isGameOver(games[p.id]) ? ' done' : '');
       chip.innerHTML = '<span class="pname"></span><span class="pscore"></span>';
       chip.querySelector('.pname').textContent = p.name;
-      chip.querySelector('.pscore').textContent = Bowling.score(p.game).total;
-      chip.addEventListener('click', function () { selectPlayer(i); });
+      chip.querySelector('.pscore').textContent = Bowling.score(games[p.id]).total;
+      chip.addEventListener('click', function () {
+        commit({ type: 'select_player', playerId: p.id });
+      });
       el.players.appendChild(chip);
     });
 
-    if (state.players.length < MAX_PLAYERS) {
+    if (state.players.length < Ops.MAX_PLAYERS) {
       var add = document.createElement('button');
       add.className = 'player-chip add';
       add.textContent = '+ Player';
@@ -290,9 +274,7 @@
     }
 
     var currentCell = el.board.children[current];
-    if (currentCell && currentCell.scrollIntoView) {
-      currentCell.scrollIntoView({ block: 'nearest' });
-    }
+    if (currentCell && currentCell.scrollIntoView) currentCell.scrollIntoView({ block: 'nearest' });
   }
 
   function renderStats(game, result, max, over) {
@@ -347,7 +329,7 @@
     if (markKey.disabled) return;
     if (markKey.dataset.action === 'results') {
       resultsDismissed = false;
-      renderResults();
+      render();
       return;
     }
     roll(Number(markKey.dataset.pins));
@@ -356,7 +338,7 @@
   function renderKeys(game, over) {
     var standing = Bowling.pinsStanding(game);
     var fresh = isFreshRack(game);
-    var everyoneDone = gameOverForEveryone();
+    var done = everyoneDone();
 
     numberKeys.forEach(function (key, n) {
       key.disabled = over || n > standing;
@@ -370,22 +352,129 @@
     if (!over) {
       markKey.disabled = false;
       markKey.textContent = fresh ? '✕  STRIKE' : '/  SPARE  ·  ' + standing;
-    } else if (everyoneDone && resultsDismissed) {
+    } else if (done && resultsDismissed) {
       markKey.disabled = false;
       markKey.dataset.action = 'results';
       markKey.classList.add('ghost');
       markKey.textContent = 'SHOW RESULTS';
     } else {
       markKey.disabled = true;
-      markKey.textContent = everyoneDone ? 'GAME OVER' : 'PLAYER FINISHED';
+      markKey.textContent = done ? 'GAME OVER' : 'PLAYER FINISHED';
     }
+  }
+
+  function renderLive() {
+    var live = Sync.isLive();
+    el.liveChip.hidden = !live;
+    if (!live) return;
+
+    var status = Sync.status();
+    el.liveChip.className = 'live-chip ' + status;
+    el.liveChip.innerHTML = '<span class="dot"></span><span class="code"></span><span class="count"></span>';
+    el.liveChip.querySelector('.code').textContent = Sync.code();
+    el.liveChip.querySelector('.count').textContent = status === 'live'
+      ? (viewers > 1 ? viewers + ' phones' : '1 phone')
+      : 'reconnecting';
+  }
+
+  function renderSyncPanel() {
+    // A code being typed here must survive an update arriving from the other phone.
+    if (el.syncPanel.contains(document.activeElement)) return;
+    el.syncPanel.innerHTML = '';
+
+    if (Sync.isLive()) {
+      var live = document.createElement('div');
+      live.className = 'room';
+      live.innerHTML =
+        '<div class="room-code"></div>' +
+        '<p class="hint">Anyone on this code can enter scores — the card stays in step on every phone.</p>';
+      live.querySelector('.room-code').textContent = Sync.code();
+
+      var copy = button('Copy invite link', 'sheet-btn', function () {
+        var link = location.origin + location.pathname + '#' + Sync.code();
+        var done = function () { toast('Link copied'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(link).then(done, function () { toast(link); });
+        } else {
+          toast(link);
+        }
+      });
+
+      var leave = button('Leave shared game', 'sheet-btn danger', function () {
+        Sync.leave();
+        history.replaceState(null, '', location.pathname + location.search);
+        save();
+        render();
+        toast('Back to keeping score on this phone');
+      });
+
+      el.syncPanel.appendChild(live);
+      el.syncPanel.appendChild(copy);
+      el.syncPanel.appendChild(leave);
+      return;
+    }
+
+    var start = button('Start a shared game', 'sheet-btn primary', function () {
+      start.disabled = true;
+      Sync.create(Ops.serialize(state)).then(function (payload) {
+        location.hash = payload.code;
+        adopt(payload);
+        toast('Share code ' + payload.code);
+      }, function (err) {
+        syncNote = err.message;
+        start.disabled = false;
+        render();
+      });
+    });
+
+    var joinRow = document.createElement('form');
+    joinRow.className = 'join-row';
+    joinRow.innerHTML =
+      '<input id="joinCode" inputmode="latin" autocomplete="off" autocapitalize="characters" ' +
+      'spellcheck="false" maxlength="4" placeholder="CODE" aria-label="Game code">' +
+      '<button class="sheet-btn" type="submit">Join</button>';
+    joinRow.addEventListener('submit', function (event) {
+      event.preventDefault();
+      joinRoom(joinRow.querySelector('#joinCode').value);
+    });
+
+    el.syncPanel.appendChild(start);
+    el.syncPanel.appendChild(joinRow);
+
+    var note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = syncNote ||
+      'Start a game to get a four-letter code, then hand it to whoever is sitting with the other phone.';
+    el.syncPanel.appendChild(note);
+  }
+
+  function joinRoom(code) {
+    return Sync.join(code).then(function (payload) {
+      location.hash = payload.code;
+      adopt(payload);
+      closeSheet();
+      toast('Joined game ' + payload.code);
+    }, function (err) {
+      syncNote = err.message;
+      toast(err.message);
+      render();
+    });
+  }
+
+  function button(text, className, onClick) {
+    var el2 = document.createElement('button');
+    el2.className = className;
+    el2.textContent = text;
+    el2.addEventListener('click', onClick);
+    return el2;
   }
 
   function renderRoster() {
     // Never rebuild the list out from under a name being typed.
     if (el.roster.contains(document.activeElement)) return;
     el.roster.innerHTML = '';
-    state.players.forEach(function (p, i) {
+
+    state.players.forEach(function (p) {
       var row = document.createElement('div');
       row.className = 'roster-row';
 
@@ -394,19 +483,12 @@
       input.value = p.name;
       input.maxLength = 18;
       input.setAttribute('aria-label', 'Player name');
-      input.addEventListener('input', function () {
-        p.name = input.value;
-        save();
-        renderPlayers();
-        renderStats(activePlayer().game, Bowling.score(activePlayer().game),
-          Bowling.maxPossible(activePlayer().game), Bowling.isGameOver(activePlayer().game));
+      // Committed on blur or Enter, so a shared game isn't spammed per keystroke.
+      input.addEventListener('change', function () {
+        commit({ type: 'rename_player', playerId: p.id, name: input.value });
       });
       input.addEventListener('blur', function () {
-        if (!input.value.trim()) {
-          p.name = 'Player ' + (i + 1);
-          save();
-          render();
-        }
+        if (input.value !== p.name) commit({ type: 'rename_player', playerId: p.id, name: input.value });
       });
       row.appendChild(input);
 
@@ -415,7 +497,9 @@
         remove.className = 'icon-btn';
         remove.setAttribute('aria-label', 'Remove ' + p.name);
         remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>';
-        confirmTwice(remove, 'Sure?', function () { removePlayer(i); });
+        confirmTwice(remove, 'Sure?', function () {
+          commit({ type: 'remove_player', playerId: p.id });
+        });
         row.appendChild(remove);
       }
 
@@ -424,11 +508,10 @@
   }
 
   function renderResults() {
-    var finished = gameOverForEveryone();
+    var finished = everyoneDone();
     var show = finished && !resultsDismissed;
 
     el.results.classList.toggle('open', show);
-    // The keypad is dead once every game is over — give the space to the card.
     var app = document.querySelector('.app');
     app.classList.toggle('all-done', finished);
     app.classList.toggle('results-open', show);
@@ -439,7 +522,7 @@
     }
 
     var ranked = state.players
-      .map(function (p) { return { name: p.name, total: Bowling.score(p.game).total }; })
+      .map(function (p) { return { name: p.name, total: Bowling.score(games[p.id]).total }; })
       .sort(function (a, b) { return b.total - a.total; });
 
     el.resultsTitle.textContent = state.players.length > 1
@@ -465,24 +548,24 @@
   }
 
   /* Turns a destructive button into a two-tap confirm instead of a native dialog. */
-  function confirmTwice(button, prompt, action) {
+  function confirmTwice(target, prompt, action) {
     var armed = false;
-    var original = button.innerHTML;
+    var original = target.innerHTML;
     var timer = null;
 
-    button.addEventListener('click', function () {
+    target.addEventListener('click', function () {
       if (armed) {
         clearTimeout(timer);
         action();
         return;
       }
       armed = true;
-      button.textContent = prompt;
-      if (button.classList.contains('icon-btn')) button.classList.add('wide-confirm');
+      target.textContent = prompt;
+      if (target.classList.contains('icon-btn')) target.classList.add('wide-confirm');
       timer = setTimeout(function () {
         armed = false;
-        button.innerHTML = original;
-        button.classList.remove('wide-confirm');
+        target.innerHTML = original;
+        target.classList.remove('wide-confirm');
       }, 2600);
     });
   }
@@ -508,12 +591,12 @@
   /* ---------- wiring ---------- */
 
   function init() {
-    if (!load()) state.players = [newPlayer('Player 1')];
-
+    load();
     buildKeys();
 
     el.undoBtn.addEventListener('click', undo);
     el.menuBtn.addEventListener('click', openSheet);
+    el.liveChip.addEventListener('click', openSheet);
     el.scrim.addEventListener('click', closeSheet);
     document.getElementById('closeSheetBtn').addEventListener('click', closeSheet);
     el.addPlayerBtn.addEventListener('click', addPlayer);
@@ -530,6 +613,12 @@
       closeSheet();
     });
 
+    Sync.on('state', adopt);
+    Sync.on('status', function (status) {
+      renderLive();
+      if (status === 'connecting') toast('Reconnecting…');
+    });
+
     document.addEventListener('keydown', function (event) {
       if (event.target.tagName === 'INPUT') return;
       var key = event.key;
@@ -542,6 +631,10 @@
     });
 
     render();
+
+    // An invite link (#CODE) drops you straight into that game.
+    var invited = location.hash.replace('#', '').toUpperCase();
+    if (/^[A-Z0-9]{4}$/.test(invited) && Sync.canSync()) joinRoom(invited);
   }
 
   init();
