@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Strike — Bowling Score Tracker</title>
+<meta name="description" content="Track bowling scores frame by frame on your phone, with the maximum score still possible updated after every ball.">
+<meta name="theme-color" content="#080b14">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Strike">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='15' fill='%236f6cff'/><circle cx='13' cy='11' r='2.2' fill='%23080b14'/><circle cx='19.5' cy='13' r='2.2' fill='%23080b14'/><circle cx='15' cy='18' r='2.2' fill='%23080b14'/></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>Strike</div>
+    <button class="icon-btn" id="undoBtn" title="Undo last ball" aria-label="Undo last ball">
+      <svg viewBox="0 0 24 24"><path d="M4 9h11a5 5 0 0 1 0 10h-6"/><path d="M8 5 4 9l4 4"/></svg>
+    </button>
+    <button class="icon-btn" id="menuBtn" title="Players and game options" aria-label="Players and game options">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+    </button>
+  </header>
+
+  <nav class="players" id="players" aria-label="Players"></nav>
+
+  <section class="stats">
+    <div class="stat">
+      <div class="label">Score</div>
+      <div class="value" id="score">0</div>
+      <div class="sub" id="scoreSub">through frame 0</div>
+    </div>
+    <div class="stat max">
+      <div class="label">Max possible</div>
+      <div class="value" id="max">300</div>
+      <div class="sub" id="maxSub">a perfect game is still on</div>
+    </div>
+    <div class="bar"><span id="bar" style="width:0%"></span></div>
+  </section>
+
+  <div class="board-wrap">
+    <div class="board" id="board"></div>
+  </div>
+
+  <section class="pad">
+    <div class="turn">
+      <span id="turnInfo"><b>Frame 1</b> · Ball 1</span>
+      <span class="pins" id="pinsInfo">10 pins standing</span>
+    </div>
+    <div class="keys" id="keys"></div>
+  </section>
+
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Players and game options">
+  <button class="grip" id="closeSheetBtn" aria-label="Close"></button>
+
+  <h2>Players</h2>
+  <div class="roster" id="roster"></div>
+  <button class="sheet-btn" id="addPlayerBtn" style="margin-top:8px">+ Add player</button>
+
+  <h2>Game</h2>
+  <button class="sheet-btn primary" id="newGameBtn">New game</button>
+
+  <h2>How it works</h2>
+  <p class="hint">
+    Tap the number of pins you knocked down, or hit the big
+    <b>strike</b> / <b>spare</b> button. Frames score themselves once their bonus
+    balls are thrown — a <b>&ndash;</b> means the frame is still waiting on a bonus.
+    <b>Max possible</b> assumes you strike out from here, so it drops the moment a
+    strike or spare is missed and tells you what is still on the table.
+  </p>
+</div>
+
+<div class="results" id="results">
+  <div class="results-card">
+    <h3 id="resultsTitle">Final score</h3>
+    <div id="standings"></div>
+    <button class="sheet-btn primary" id="playAgainBtn">Play again</button>
+    <button class="sheet-btn" id="reviewBtn">Review scorecard</button>
+  </div>
+</div>
+
+<script src="scoring.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
